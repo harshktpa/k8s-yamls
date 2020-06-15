@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: counter
+  name: counter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: counter
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: counter
+    spec:
+      containers:
+      - image: kahootali/counter:1.0
+        name: counter
+        resources: {}
+        volumeMounts:
+          - name: counter
+            mountPath: /app/
+#      volumes:
+#        - name: counter
+#          persistentVolumeClaim:
+#            claimName: counter
+  volumeClaimTemplates:
+   - metadata:
+       name: counter
+     spec:
+       accessModes: [ "ReadWriteOnce" ]
+       storageClassName: "local-storage"
+       resources:
+         requests:
+           storage: 5Gi
