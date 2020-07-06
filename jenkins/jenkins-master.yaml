@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: jenkins
+  name: jenkins
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jenkins
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: jenkins
+    spec:
+      containers:
+      - image: hkate30557/jenkins-master:latest
+        imagePullPolicy: Always
+        name: jenkins-master
+        resources: {}
+        env:
+          - name: JAVA_OPTS
+            value: -Djenkins.install.runSetupWizard=false
+        ports:
+          - name: http-port
+            containerPort: 8080
+          - name: jnlp-port
+            containerPort: 50000
+        volumeMounts:
+          - name: jenkins-home
+            mountPath: /var/jenkins_home
+      volumes:
+        - name: jenkins-home
+          emptyDir: {}
