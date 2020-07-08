@@ -1,0 +1,419 @@
+# Source: elasticsearch/templates/client-serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app: elasticsearch
+    chart: elasticsearch-1.32.5
+    component: "client"
+    heritage: Helm
+    release: test
+  name: test-elasticsearch-client
+---
+# Source: elasticsearch/templates/data-serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app: elasticsearch
+    chart: elasticsearch-1.32.5
+    component: "data"
+    heritage: Helm
+    release: test
+  name: test-elasticsearch-data
+---
+# Source: elasticsearch/templates/master-serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app: elasticsearch
+    chart: elasticsearch-1.32.5
+    component: "master"
+    heritage: Helm
+    release: test
+  name: test-elasticsearch-master
+---
+# Source: elasticsearch/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-elasticsearch
+  labels:
+    app: test-elasticsearch
+    chart: "elasticsearch-1.32.5"
+    release: "test"
+    heritage: "Helm"
+data:
+  elasticsearch.yml: |-
+    cluster.name: elasticsearch
+
+    node.data: ${NODE_DATA:true}
+    node.master: ${NODE_MASTER:true}
+    node.ingest: ${NODE_INGEST:true}
+    node.name: ${HOSTNAME}
+    network.host: 0.0.0.0
+    # see https://github.com/kubernetes/kubernetes/issues/3595
+    bootstrap.memory_lock: ${BOOTSTRAP_MEMORY_LOCK:false}
+
+    discovery:
+      zen:
+        ping.unicast.hosts: ${DISCOVERY_SERVICE:}
+        minimum_master_nodes: ${MINIMUM_MASTER_NODES:2}
+
+    # see https://github.com/elastic/elasticsearch-definitive-guide/pull/679
+    processors: ${PROCESSORS:}
+
+    # avoid split-brain w/ a minimum consensus of two masters plus a data node
+    gateway.expected_master_nodes: ${EXPECTED_MASTER_NODES:2}
+    gateway.expected_data_nodes: ${EXPECTED_DATA_NODES:1}
+    gateway.recover_after_time: ${RECOVER_AFTER_TIME:5m}
+    gateway.recover_after_master_nodes: ${RECOVER_AFTER_MASTER_NODES:2}
+    gateway.recover_after_data_nodes: ${RECOVER_AFTER_DATA_NODES:1}
+---
+# Source: elasticsearch/templates/tests/test-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-elasticsearch-test
+  labels:
+    app: test-elasticsearch
+    chart: "elasticsearch-1.32.5"
+    heritage: "Helm"
+    release: "test"
+data:
+  run.sh: |-
+    @test "Test Access and Health" {
+      curl -D - http://test-elasticsearch-client:9200
+      curl -D - http://test-elasticsearch-client:9200/_cluster/health?wait_for_status=green
+    }
+---
+# Source: elasticsearch/templates/client-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: elasticsearch
+    chart: elasticsearch-1.32.5
+    component: "client"
+    heritage: Helm
+    release: test
+  name: test-elasticsearch-client
+
+spec:
+  ports:
+    - name: http
+      port: 9200
+      targetPort: http
+  selector:
+    app: elasticsearch
+    component: "client"
+    release: test
+  type: ClusterIP
+---
+# Source: elasticsearch/templates/master-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: elasticsearch
+    chart: elasticsearch-1.32.5
+    component: "master"
+    heritage: Helm
+    release: test
+  name: test-elasticsearch-discovery
+spec:
+  clusterIP: None
+  ports:
+    - port: 9300
+      targetPort: transport
+  selector:
+    app: elasticsearch
+    component: "master"
+    release: test
+---
+# Source: elasticsearch/templates/client-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: elasticsearch
+    chart: elasticsearch-1.32.5
+    component: "client"
+    heritage: Helm
+    release: test
+  name: test-elasticsearch-client
+spec:
+  selector:
+    matchLabels:
+      app: elasticsearch
+      tuned.openshift.io/elasticsearch: ''
+      component: "client"
+      release: test
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+        tuned.openshift.io/elasticsearch: ''
+        component: "client"
+        release: test
+      annotations:
+        checksum/config: 4c4d4483b0981bc43966bcf13206bea335a39f1ea84bed006ceca56372c8c4fa
+    spec:
+      serviceAccountName: test-elasticsearch-client
+      securityContext: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 1
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: "elasticsearch"
+                  release: "test"
+                  component: "client"
+      containers:
+      - name: elasticsearch
+        env:
+        - name: NODE_DATA
+          value: "false"
+        - name: NODE_MASTER
+          value: "false"
+        - name: DISCOVERY_SERVICE
+          value: test-elasticsearch-discovery
+        - name: PROCESSORS
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.cpu
+        - name: ES_JAVA_OPTS
+          value: "-Djava.net.preferIPv4Stack=true -Xms512m -Xmx512m  "
+        - name: MINIMUM_MASTER_NODES
+          value: "2"
+        resources:
+            limits:
+              cpu: "1"
+            requests:
+              cpu: 25m
+              memory: 512Mi
+        image: "registry.ford.com/hkatepal/elasticsearch:7.8"
+        imagePullPolicy: "IfNotPresent"
+        ports:
+        - containerPort: 9200
+          name: http
+        - containerPort: 9300
+          name: transport
+        volumeMounts:
+        - mountPath: /usr/share/elasticsearch/config/elasticsearch.yml
+          name: config
+          subPath: elasticsearch.yml
+      imagePullSecrets:
+        - name: hkatepal-push-pull-secret
+      volumes:
+      - name: config
+        configMap:
+          name: test-elasticsearch
+---
+# Source: elasticsearch/templates/data-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: elasticsearch
+    chart: elasticsearch-1.32.5
+    component: "data"
+    heritage: Helm
+    release: test
+  name: test-elasticsearch-data
+spec:
+  selector:
+    matchLabels:
+      app: elasticsearch
+      tuned.openshift.io/elasticsearch: ''
+      component: "data"
+      release: test
+      role: data
+  serviceName: test-elasticsearch-data
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+        tuned.openshift.io/elasticsearch: ''
+        component: "data"
+        release: test
+        role: data
+    spec:
+      serviceAccountName: test-elasticsearch-data
+      securityContext: {}
+        # fsGroup: 1000
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 1
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: "elasticsearch"
+                  release: "test"
+                  component: "data"
+      containers:
+      - name: elasticsearch
+        env:
+        - name: DISCOVERY_SERVICE
+          value: test-elasticsearch-discovery
+        - name: NODE_MASTER
+          value: "false"
+        - name: PROCESSORS
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.cpu
+        - name: ES_JAVA_OPTS
+          value: "-Djava.net.preferIPv4Stack=true -Xms1536m -Xmx1536m  "
+        - name: MINIMUM_MASTER_NODES
+          value: "2"
+        image: "registry.ford.com/hkatepal/elasticsearch:7.8"
+        imagePullPolicy: "IfNotPresent"
+        ports:
+        - containerPort: 9300
+          name: transport
+        resources:
+            limits:
+              cpu: "1"
+            requests:
+              cpu: 25m
+              memory: 1536Mi
+        readinessProbe:
+          httpGet:
+            path: /_cluster/health?local=true
+            port: 9200
+          initialDelaySeconds: 5
+        volumeMounts:
+        - mountPath: /usr/share/elasticsearch/data
+          name: data
+        - mountPath: /usr/share/elasticsearch/config/elasticsearch.yml
+          name: config
+          subPath: elasticsearch.yml
+      terminationGracePeriodSeconds: 3600
+      imagePullSecrets:
+        - name: hkatepal-push-pull-secret
+      volumes:
+      - name: config
+        configMap:
+          name: test-elasticsearch
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: OnDelete
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+        - "ReadWriteOnce"
+      resources:
+        requests:
+          storage: "30Gi"
+      storageClassName: dynamic-azure-block-device-premium-ssd
+---
+# Source: elasticsearch/templates/master-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: elasticsearch
+    chart: elasticsearch-1.32.5
+    component: "master"
+    heritage: Helm
+    release: test
+  name: test-elasticsearch-master
+spec:
+  selector:
+    matchLabels:
+      app: elasticsearch
+      tuned.openshift.io/elasticsearch: ''
+      component: "master"
+      release: test
+      role: master
+  serviceName: test-elasticsearch-master
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+        tuned.openshift.io/elasticsearch: ''
+        component: "master"
+        release: test
+        role: master
+    spec:
+      serviceAccountName: test-elasticsearch-master
+      securityContext: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 1
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: "elasticsearch"
+                  release: "test"
+                  component: "master"
+      containers:
+      - name: elasticsearch
+        env:
+        - name: NODE_DATA
+          value: "false"
+        - name: DISCOVERY_SERVICE
+          value: test-elasticsearch-discovery
+        - name: PROCESSORS
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.cpu
+        - name: ES_JAVA_OPTS
+          value: "-Djava.net.preferIPv4Stack=true -Xms512m -Xmx512m  "
+        - name: MINIMUM_MASTER_NODES
+          value: "2"
+        resources:
+            limits:
+              cpu: "1"
+            requests:
+              cpu: 25m
+              memory: 512Mi
+        readinessProbe:
+          httpGet:
+            path: /_cluster/health?local=true
+            port: 9200
+          initialDelaySeconds: 5
+        image: "registry.ford.com/hkatepal/elasticsearch:7.8"
+        imagePullPolicy: "IfNotPresent"
+        ports:
+        - containerPort: 9300
+          name: transport
+
+        volumeMounts:
+        - mountPath: /usr/share/elasticsearch/data
+          name: data
+        - mountPath: /usr/share/elasticsearch/config/elasticsearch.yml
+          name: config
+          subPath: elasticsearch.yml
+      imagePullSecrets:
+        - name: hkatepal-push-pull-secret
+      volumes:
+      - name: config
+        configMap:
+          name: test-elasticsearch
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: OnDelete
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+        - "ReadWriteOnce"
+      resources:
+        requests:
+          storage: "4Gi"
+      storageClassName: dynamic-azure-block-device-premium-ssd
